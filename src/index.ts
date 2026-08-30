@@ -52,9 +52,9 @@ async function checkForUpdate() {
 }
 
 // Runs every day at 10:00 AM Dhaka time (6-field cron: seconds minutes hours day month weekday)
-cron.schedule("0 0 10 * * *", checkForUpdate, {
-    timezone: "Asia/Dhaka",
-});
+// cron.schedule("0 0 10 * * *", checkForUpdate, {
+//     timezone: "Asia/Dhaka",
+// });
 
 checkForUpdate();
 
