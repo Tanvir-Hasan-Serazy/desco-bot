@@ -1,0 +1,23 @@
+name: DESCO Daily Balance
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # 04:00 UTC = 10:00 Asia/Dhaka
+  workflow_dispatch: {}    # lets you trigger it manually to test
+
+jobs:
+  send-balance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/index.js
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          DESCO_ACCOUNT_NO: ${{ secrets.DESCO_ACCOUNT_NO }}
+          DESCO_METER_NO: ${{ secrets.DESCO_METER_NO }}
