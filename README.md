@@ -23,7 +23,10 @@ Run it for free on **GitHub Actions**, or self-host it on a **VPS** using PM2.
 - [Step 3 — Fork & Configure on GitHub](#step-3--fork--configure-on-github)
 - [Step 4 — Add GitHub Actions Secrets](#step-4--add-github-actions-secrets)
 - [Step 5 — Enable & Test GitHub Actions](#step-5--enable--test-github-actions)
-- [Fixing GitHub Actions Cron Drift](#fixing-github-actions-cron-drift)
+- [Why Telegram Notifications May Be Delayed](#why-telegram-notifications-may-be-delayed)
+- [How to Fix Delays and Make Timing Consistent](#how-to-fix-delays-and-make-timing-consistent)
+  - [Alternative 1 (Recommended & Free): cron-job.org Trigger](#alternative-1-recommended--free-cron-joborg-trigger)
+  - [Alternative 2: Self-Host on a VPS with PM2](#alternative-2-self-host-on-a-vps-with-pm2)
 - [VPS Deployment](#vps-deployment)
 - [Local Development](#local-development)
 - [Project Structure](#project-structure)
@@ -60,20 +63,16 @@ DESCO (Dhaka Electric Supply Company) provides a prepaid electricity system. Thi
 ## How It Works
 
 ```
-cron-job.org (fires at exactly 04:00 UTC)
-        │
-        │  POST /repos/{owner}/{repo}/actions/workflows/daily-balance.yml/dispatches
-        ▼
-   GitHub API → workflow_dispatch
-        │
-        ▼
-   GitHub Actions runner
-        │
-        ▼
-   fetchBalance() ──► DESCO prepaid API (prepaid.desco.org.bd)
-        │
-        ▼
-   Telegram Bot API ──► sendMessage() ──► Your Telegram Chat
+[GitHub Actions schedule] OR [External Cron (cron-job.org)]
+                    │
+                    ▼
+          GitHub Actions Runner
+                    │
+                    ▼
+     fetchBalance() ──► DESCO prepaid API
+                    │
+                    ▼
+     Telegram Bot API ──► sendMessage() ──► Your Telegram Chat
 ```
 
 On each run, the script:
@@ -224,61 +223,74 @@ Click the running workflow → **send-balance** job → expand the `node dist/in
 
 ---
 
-## Fixing GitHub Actions Cron Drift
+## Why Telegram Notifications May Be Delayed
 
-GitHub's cron scheduler runs on shared infrastructure with **no timing guarantee**. Scheduled workflows commonly fire 30 minutes to several hours late.
+If you rely on GitHub Actions' default scheduled cron (`schedule: - cron: '0 4 * * *'`), you will notice that messages rarely arrive at exactly 10:00 AM. Sometimes they arrive 15 minutes, 45 minutes, or even a couple of hours late.
 
-**The solution:** use [**cron-job.org**](https://cron-job.org) (free) to call the GitHub `workflow_dispatch` API at exactly the time you want. The `schedule:` block has been removed from this repo's workflow — `workflow_dispatch` is the only trigger.
+### Why does this happen?
+1. **GitHub Actions Scheduled Jobs Are Not Real-Time:**  
+   GitHub provides scheduled runs on shared community runners at lowest execution priority. During peak hours (especially on top-of-the-hour marks like `:00`), thousands of repositories request runners simultaneously. GitHub queues the runs, causing severe **cron drift / delays**.
+2. **Short Worker Queueing:**  
+   When your scheduled time is reached, GitHub puts your job in a queue until a free runner instance is allocated.
+3. **DESCO API / Network Response:**  
+   While the API call and Telegram message dispatch themselves take under 3 seconds once running, the waiting time on GitHub’s side causes 99% of the delay.
 
-### How to Set Up cron-job.org
+---
 
-#### 1 — Create a GitHub Fine-Grained Personal Access Token
+## How to Fix Delays and Make Timing Consistent
 
-1. Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**
-2. Click **Generate new token** and fill in:
+To receive your Telegram notification punctually at your chosen time every single day, you have two reliable alternatives:
+
+### Alternative 1 (Recommended & Free): cron-job.org Trigger
+
+Use a free external scheduler service like [**cron-job.org**](https://cron-job.org) to ping GitHub’s `workflow_dispatch` API at exactly 10:00 AM (04:00 UTC). Because `workflow_dispatch` events are treated as user-initiated runs rather than queued background cron jobs, GitHub starts the runner almost immediately (typically within seconds).
+
+#### Step 1: Create a GitHub Personal Access Token (PAT)
+1. Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**.
+2. Click **Generate new token**:
    - **Token name:** `desco-bot-dispatch`
-   - **Expiration:** 1 year
-   - **Repository access:** Only `desco-bot`
-   - **Permissions → Actions:** Read and write
-3. Click **Generate token** and copy it immediately — GitHub shows it only once
+   - **Expiration:** 1 year (or your preferred duration)
+   - **Repository access:** "Only select repositories" → select `desco-bot`
+   - **Permissions → Repository permissions:** Set **Actions** to **Read and write**
+3. Click **Generate token** and copy the token value (`github_pat_...`).
 
 > [!CAUTION]
-> This token can trigger any workflow in your repository. Store it securely and never commit it.
+> Treat this token like a password. Never commit it to git or share it publicly.
 
-#### 2 — Create the Cronjob
+#### Step 2: Set up cron-job.org
+1. Create a free account at [cron-job.org](https://cron-job.org) and verify your email.
+2. Go to **Dashboard → Cronjobs → Create cronjob**.
+3. Fill in the primary details:
+   - **Title:** `DESCO Balance Bot`
+   - **URL:** `https://api.github.com/repos/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/actions/workflows/daily-balance.yml/dispatches`
+   - **Request method:** `POST`
+4. Expand **Advanced → Request headers** and add:
+   - `Authorization`: `Bearer YOUR_PAT_TOKEN`
+   - `Content-Type`: `application/json`
+   - `Accept`: `application/vnd.github+json`
+   - `X-GitHub-Api-Version`: `2022-11-28`
+5. Under **Request body**, put:
+   ```json
+   {"ref": "main"}
+   ```
+   *(Replace `"main"` with `"master"` if your repository uses master as the default branch)*.
+6. Set the **Schedule**:
+   - Time: `04:00 UTC` (which corresponds to `10:00 AM Asia/Dhaka`)
+   - Interval: Every day
+7. Click **Create**. You can click **Test run** to verify immediately — a `204 No Content` status means GitHub received and launched the workflow immediately!
 
-1. Register at [https://cron-job.org](https://cron-job.org) and verify your email
-2. Go to **Dashboard → Cronjobs → Create cronjob**
+> [!TIP]
+> If you switch to cron-job.org, you can edit `.github/workflows/daily-balance.yml` to remove the `schedule:` trigger so you don't receive duplicate runs.
 
-| Field | Value |
-|---|---|
-| **Title** | `DESCO Balance Bot` |
-| **URL** | `https://api.github.com/repos/YOUR_USERNAME/desco-bot/actions/workflows/daily-balance.yml/dispatches` |
-| **Request method** | `POST` |
+---
 
-Under **Advanced → Request headers**:
+### Alternative 2: Self-Host on a VPS with PM2
 
-| Header | Value |
-|---|---|
-| `Authorization` | `Bearer YOUR_PAT_TOKEN` |
-| `Content-Type` | `application/json` |
-| `Accept` | `application/vnd.github+json` |
-| `X-GitHub-Api-Version` | `2022-11-28` |
+If you prefer total control without third-party webhooks or GitHub Actions limits, you can run the bot on any Linux VPS or Raspberry Pi. Using `node-cron` with PM2 guarantees 100% on-time execution down to the exact second.
 
-Under **Advanced → Request body**:
+See the [VPS Deployment](#vps-deployment) section below for the complete setup.
 
-```json
-{"ref": "main"}
-```
-
-**Schedule:** Minute `0`, Hour `4`, every day (04:00 UTC = 10:00 AM Asia/Dhaka).
-
-#### 3 — Verify
-
-After the first run, cron-job.org shows the HTTP response from GitHub. A `204 No Content` means the dispatch was accepted. A `4xx` indicates a misconfiguration (wrong URL, bad token, or wrong branch name). You can also click **Run now** to test immediately.
-
-> [!WARNING]
-> Do not re-add the `schedule:` block to the workflow YAML. If both the GitHub schedule and cron-job.org are active simultaneously, the workflow will fire twice and send two Telegram messages per day.
+---
 
 ---
 
