@@ -140,7 +140,6 @@ async function fetchBalance(): Promise<FetchResult> {
   );
 
   // 4. Last realtime balance (optional extra: failure must not block the message)
-  // 4. Last realtime balance (optional extra: failure must not block the message)
   let realtime: RealtimeMeter | null = null;
   try {
     const { data } = await client.get<SummaryResponse>(

@@ -1,6 +1,6 @@
 # DESCO Balance Bot
 
-![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 ![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)
 ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI%2FCD-2088FF?logo=github-actions&logoColor=white)
@@ -336,13 +336,13 @@ A VPS gives you full control over timing, logs, and uptime with no dependency on
 
 - Ubuntu 20.04+ (or any Debian-based distro)
 - SSH access
-- Node.js 20+ and `git`
+- Node.js 24+ and `git`
 
 ### Step 1 — Install Node.js
 
 ```bash
 sudo apt update && sudo apt install -y curl
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
 node --version
 ```
@@ -509,7 +509,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
       - run: npm ci
       - run: npm run build
       - run: node dist/index.js
@@ -524,7 +524,7 @@ jobs:
 | Step | Description |
 |---|---|
 | `actions/checkout@v4` | Clones the repository into the runner |
-| `actions/setup-node@v4` | Installs Node.js 20 |
+| `actions/setup-node@v4` | Installs Node.js 24 |
 | `npm ci` | Installs dependencies from `package-lock.json` |
 | `npm run build` | Compiles TypeScript to JavaScript |
 | `node dist/index.js` | Fetches balance, sends Telegram message, exits |
