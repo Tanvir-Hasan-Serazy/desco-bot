@@ -1,12 +1,12 @@
 # DESCO Balance Bot
 
-![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 ![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)
 ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI%2FCD-2088FF?logo=github-actions&logoColor=white)
 ![License](https://img.shields.io/badge/License-ISC-yellow)
 
-A lightweight Node.js + TypeScript bot that fetches your **DESCO prepaid electricity balance** daily and pushes a notification to a **Telegram chat or group**.
+A lightweight Node.js + TypeScript bot that authenticates with the DESCO prepaid portal, fetches your electricity balance, and pushes a notification to a **Telegram chat or group**.
 
 Run it for free on **GitHub Actions**, or self-host it on a **VPS** using PM2.
 
@@ -40,17 +40,20 @@ Run it for free on **GitHub Actions**, or self-host it on a **VPS** using PM2.
 
 ## Overview
 
-DESCO (Dhaka Electric Supply Company) provides a prepaid electricity system. This bot automates the daily balance check — it calls the DESCO prepaid API every day at **10:00 AM Dhaka time** and sends a formatted Telegram message with:
+DESCO (Dhaka Electric Supply Company) provides a prepaid electricity system. This bot checks your balance and sends a formatted Telegram message with:
 
 - Current balance (Taka)
+- Current month's usage
 - Account number
-- Last meter reading timestamp
+- Human-readable snapshot date and time in the Asia/Dhaka timezone
+- A newer realtime balance when DESCO provides one
+- A warning when DESCO marks the data as stale
 
 ---
 
 ## Features
 
-- ⚡ **Automatic daily balance check** at 10:00 AM Asia/Dhaka time
+- ⚡ **Daily balance check** through the GitHub Actions schedule at 04:00 UTC (10:00 AM Asia/Dhaka)
 - 📲 **Telegram notification** delivered directly to your phone
 - 🔁 **Manual trigger** via GitHub Actions UI for on-demand checks
 - 🔐 **No credentials stored in code** — secrets managed via GitHub Actions or `.env`
@@ -69,7 +72,7 @@ DESCO (Dhaka Electric Supply Company) provides a prepaid electricity system. Thi
           GitHub Actions Runner
                     │
                     ▼
-     fetchBalance() ──► DESCO prepaid API
+     fetchBalance() ──► DESCO prepaid portal/API
                     │
                     ▼
      Telegram Bot API ──► sendMessage() ──► Your Telegram Chat
@@ -77,10 +80,42 @@ DESCO (Dhaka Electric Supply Company) provides a prepaid electricity system. Thi
 
 On each run, the script:
 
-1. Reads credentials from environment variables
-2. Makes an HTTPS GET request to the DESCO balance API
-3. Formats the response into a human-readable message
-4. Sends the message to your configured Telegram chat
+1. Loads the five required configuration values from environment variables.
+2. Opens the DESCO portal and obtains an XSRF token.
+3. Signs in with the DESCO username and password.
+4. Requests the required daily account snapshot for `DESCO_ACCOUNT_ID`.
+5. Requests the optional realtime balance summary and selects the configured account.
+6. Uses the realtime value only when its timestamp is newer than the daily snapshot.
+7. Formats timestamps for Asia/Dhaka and sends the result to Telegram.
+
+If the realtime endpoint fails or has no usable value, the bot still sends the daily snapshot message. A failed required request causes the run to fail and logs the HTTP status, method, URL, and response body when available.
+
+### Telegram message behavior
+
+When a newer realtime reading is available, the message includes:
+
+```text
+⚡️ DESCO Balance Update
+📅 Reading date: <reading date>
+
+💰 Available balance: <amount> Tk
+🕒 As of <readable Dhaka timestamp>
+📸 Daily snapshot: <amount> Tk (<readable Dhaka timestamp>)
+
+📊 This month's usage: <amount> Tk
+
+🏠 Account: <account number>
+```
+
+Otherwise, it reports the daily snapshot as the current balance and adds:
+
+```text
+📸 Snapshot: <readable Dhaka timestamp>
+
+ℹ️ Updated daily, not in real time.
+```
+
+If DESCO marks the snapshot as stale, the message ends with a warning. Values that are missing or null are displayed as `N/A`.
 
 ---
 
@@ -118,7 +153,7 @@ Send `/newbot` and follow the two prompts:
 BotFather will reply with your token:
 
 ```
-7412345678:AAFxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+your_telegram_bot_token
 ```
 
 This is your `BOT_TOKEN`. **Treat it like a password** — never commit it to a repository.
@@ -192,14 +227,15 @@ GitHub Actions Secrets are encrypted and injected into workflow runs at runtime.
 
 **Navigate to:** Repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
 
-Add all four secrets:
+Add all five secrets:
 
 | Secret Name | Value | Where to Get It |
 |---|---|---|
 | `BOT_TOKEN` | Telegram bot token | From BotFather (Step 1) |
 | `CHAT_ID` | Telegram chat or group ID | From `getUpdates` (Step 2) |
-| `DESCO_ACCOUNT_NO` | DESCO prepaid account number | From your DESCO bill |
-| `DESCO_METER_NO` | DESCO prepaid meter number | From your electricity meter |
+| `DESCO_USERNAME` | DESCO portal username | Your DESCO prepaid portal login |
+| `DESCO_PASSWORD` | DESCO portal password | Your DESCO prepaid portal login |
+| `DESCO_ACCOUNT_ID` | DESCO account ID | From the DESCO portal/API |
 
 > [!IMPORTANT]
 > Secret names are case-sensitive. A typo like `Bot_Token` instead of `BOT_TOKEN` will cause the workflow to fail silently.
@@ -286,11 +322,9 @@ Use a free external scheduler service like [**cron-job.org**](https://cron-job.o
 
 ### Alternative 2: Self-Host on a VPS with PM2
 
-If you prefer total control without third-party webhooks or GitHub Actions limits, you can run the bot on any Linux VPS or Raspberry Pi. Using `node-cron` with PM2 guarantees 100% on-time execution down to the exact second.
+If you prefer total control without third-party webhooks or GitHub Actions limits, you can run the bot on any Linux VPS or Raspberry Pi. Enable the optional `node-cron` schedule and run the compiled process with PM2.
 
 See the [VPS Deployment](#vps-deployment) section below for the complete setup.
-
----
 
 ---
 
@@ -302,13 +336,13 @@ A VPS gives you full control over timing, logs, and uptime with no dependency on
 
 - Ubuntu 20.04+ (or any Debian-based distro)
 - SSH access
-- Node.js 18+ and `git`
+- Node.js 20+ and `git`
 
 ### Step 1 — Install Node.js
 
 ```bash
 sudo apt update && sudo apt install -y curl
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 node --version
 ```
@@ -328,10 +362,11 @@ nano .env
 ```
 
 ```env
-BOT_TOKEN=7412345678:AAFxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-CHAT_ID=123456789
-DESCO_ACCOUNT_NO=your_desco_account_number
-DESCO_METER_NO=your_desco_meter_number
+BOT_TOKEN=your_telegram_bot_token
+CHAT_ID=your_telegram_chat_id
+DESCO_USERNAME=your_desco_portal_username
+DESCO_PASSWORD=your_desco_portal_password
+DESCO_ACCOUNT_ID=your_desco_account_id
 ```
 
 Save with `Ctrl+O` → `Enter` → `Ctrl+X`, then restrict permissions:
@@ -342,17 +377,11 @@ chmod 600 .env
 
 ### Step 4 — Enable the Cron Scheduler
 
-Open [`src/index.ts`](src/index.ts) and uncomment lines 55–57:
+Open [`src/index.ts`](src/index.ts) and uncomment the `cron.schedule` call near the bottom. Keep `checkForUpdate();` for an immediate check when PM2 starts, or remove that line if you only want the daily scheduled run:
 
 ```typescript
-// Before
-// cron.schedule("0 0 10 * * *", checkForUpdate, {
-//     timezone: "Asia/Dhaka",
-// });
-
-// After
 cron.schedule("0 0 10 * * *", checkForUpdate, {
-    timezone: "Asia/Dhaka",
+  timezone: "Asia/Dhaka",
 });
 ```
 
@@ -413,10 +442,11 @@ npm install
 Create a `.env` file in the project root:
 
 ```env
-BOT_TOKEN=7412345678:AAFxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-CHAT_ID=123456789
-DESCO_ACCOUNT_NO=your_desco_account_number
-DESCO_METER_NO=your_desco_meter_number
+BOT_TOKEN=your_telegram_bot_token
+CHAT_ID=your_telegram_chat_id
+DESCO_USERNAME=your_desco_portal_username
+DESCO_PASSWORD=your_desco_portal_password
+DESCO_ACCOUNT_ID=your_desco_account_id
 ```
 
 > [!CAUTION]
@@ -454,8 +484,9 @@ desco-bot/
 |---|---|---|
 | `BOT_TOKEN` | ✅ | Telegram bot token from BotFather |
 | `CHAT_ID` | ✅ | Target Telegram chat, group, or channel ID |
-| `DESCO_ACCOUNT_NO` | ✅ | DESCO prepaid account number |
-| `DESCO_METER_NO` | ✅ | DESCO prepaid meter number |
+| `DESCO_USERNAME` | ✅ | DESCO portal username |
+| `DESCO_PASSWORD` | ✅ | DESCO portal password |
+| `DESCO_ACCOUNT_ID` | ✅ | DESCO account ID used by the balance endpoint |
 
 Loaded from `.env` in local/VPS mode via `dotenv`. Injected as encrypted secrets in GitHub Actions.
 
@@ -467,7 +498,9 @@ Loaded from `.env` in local/VPS mode via `dotenv`. Injected as encrypted secrets
 name: DESCO Daily Balance
 
 on:
-  workflow_dispatch: {}    # Triggered by cron-job.org; also supports manual runs
+  schedule:
+    - cron: "0 4 * * *" # 04:00 UTC = 10:00 AM Asia/Dhaka
+  workflow_dispatch: {}
 
 jobs:
   send-balance:
@@ -476,21 +509,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: "20"
       - run: npm ci
       - run: npm run build
       - run: node dist/index.js
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          DESCO_ACCOUNT_NO: ${{ secrets.DESCO_ACCOUNT_NO }}
-          DESCO_METER_NO: ${{ secrets.DESCO_METER_NO }}
+          DESCO_USERNAME: ${{ secrets.DESCO_USERNAME }}
+          DESCO_PASSWORD: ${{ secrets.DESCO_PASSWORD }}
+          DESCO_ACCOUNT_ID: ${{ secrets.DESCO_ACCOUNT_ID }}
 ```
 
 | Step | Description |
 |---|---|
 | `actions/checkout@v4` | Clones the repository into the runner |
-| `actions/setup-node@v4` | Installs Node.js 18 |
+| `actions/setup-node@v4` | Installs Node.js 20 |
 | `npm ci` | Installs dependencies from `package-lock.json` |
 | `npm run build` | Compiles TypeScript to JavaScript |
 | `node dist/index.js` | Fetches balance, sends Telegram message, exits |
@@ -501,7 +535,7 @@ jobs:
 
 - All credentials are stored as **GitHub Encrypted Secrets** and are never exposed in logs or build artifacts.
 - `https.Agent({ rejectUnauthorized: false })` is used specifically for the DESCO API request because DESCO's server sends an incomplete SSL certificate chain that Node.js rejects by default. This relaxation is scoped to a single `axios` instance and does not affect any other HTTPS calls.
-- The DESCO API endpoint is public and unauthenticated — no login credentials are transmitted to DESCO's servers.
+- The bot authenticates with the DESCO portal using the configured username and password, then uses the returned session cookies to request the account balance.
 
 > [!WARNING]
 > Disabling `rejectUnauthorized` exposes that specific request to man-in-the-middle attacks. This is an acceptable tradeoff for a low-stakes read-only balance check on a trusted network.
@@ -516,7 +550,7 @@ jobs:
 | `401 Unauthorized` in logs | Invalid `BOT_TOKEN` | Regenerate via BotFather `/revoke` then `/newbot` |
 | `400 Bad Request: chat not found` | Bot not in group, or wrong group ID | Add bot to the group and re-fetch the chat ID |
 | Variables show as `undefined` | Secrets missing or misnamed | Verify secret names in Settings → Secrets and variables |
-| DESCO API returns an error | Wrong account or meter number | Cross-check values against your DESCO bill |
+| DESCO login or balance request fails | Invalid DESCO credentials or account ID | Verify `DESCO_USERNAME`, `DESCO_PASSWORD`, and `DESCO_ACCOUNT_ID` |
 | SSL error despite the workaround | Network-level TLS inspection (e.g., corporate proxy) | Test from a different network |
 | cron-job.org returns `404` | Wrong workflow filename in the dispatch URL | Confirm the filename matches `daily-balance.yml` |
 | cron-job.org returns `422` | Wrong branch name in the request body | Change `"main"` to `"master"` or your actual default branch |
@@ -526,5 +560,5 @@ jobs:
 ## Known Limitations
 
 - The DESCO API (`prepaid.desco.org.bd`) is **not officially documented** and was discovered through browser network inspection. It may change without notice.
-- The API is unauthenticated — anyone with your account number and meter number can query the same balance data.
+- The bot performs one balance check per process run. The optional VPS schedule must be enabled explicitly in [`src/index.ts`](src/index.ts).
 - GitHub Actions free tier provides 2,000 minutes/month for public repos and 500 for private. Each bot run uses roughly 1–2 minutes.
